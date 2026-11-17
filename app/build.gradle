@@ -60,8 +60,15 @@ dependencies {
     implementation 'androidx.compose.material3:material3'
     debugImplementation 'androidx.compose.ui:ui-tooling'
 
+    // WebSocket signaling client
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-    implementation 'io.github.webrtc-sdk:android:125.6422.07.1'
+
+    // WebRTC for screen streaming + data channel control commands
+    implementation 'io.github.webrtc-sdk:android:125.6422.06.1'
+
+    // JSON for signaling + command messages
     implementation 'org.json:json:20240303'
+
+    // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
 }
