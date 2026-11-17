@@ -1,0 +1,12 @@
+{
+  "name": "remoteapp-signaling-server",
+  "version": "1.0.0",
+  "description": "Minimal WebSocket signaling relay for RemoteApp pairing and WebRTC exchange",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.17.0"
+  }
+}

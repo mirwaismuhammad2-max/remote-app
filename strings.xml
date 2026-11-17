@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">RemoteApp</string>
+    <string name="accessibility_service_description">Allows RemoteApp to open, close, and control the apps you have whitelisted, from your own paired remote session. Does not read or act on any app outside your whitelist.</string>
+</resources>

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>RemoteApp Viewer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #111111;
+    --panel: #f2f2f2;
+    --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111111; --fg: #f2f2f2; --panel: #1d1d1d; --accent: #3b82f6; }
+  }
+  html, body {
+    height: 100%; margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  #setup {
+    max-width: 420px; margin: 40px auto; padding: 16px;
+  }
+  #setup input {
+    width: 100%; box-sizing: border-box; padding: 10px; margin: 6px 0;
+    border-radius: 8px; border: 1px solid #999; background: var(--panel); color: var(--fg);
+  }
+  #setup button, .app-btn {
+    padding: 10px 16px; border-radius: 8px; border: none;
+    background: var(--accent); color: white; font-weight: 600; cursor: pointer;
+  }
+  #session { display: none; height: 100%; flex-direction: column; }
+  #video-wrap {
+    position: relative; flex: 1; overflow: hidden; background: black;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  video { max-width: 100%; max-height: 100%; }
+  #apps-bar {
+    display: flex; gap: 8px; padding: 10px; overflow-x: auto;
+    background: var(--panel);
+  }
+  #apps-bar .app-btn { white-space: nowrap; flex-shrink: 0; }
+  #status-bar {
+    padding: 6px 10px; font-size: 13px; background: var(--panel); opacity: 0.8;
+  }
+  #keyboard-input {
+    position: absolute; bottom: -100px; opacity: 0; /* off-screen trigger for mobile keyboard */
+  }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h2>RemoteApp Viewer</h2>
+  <p>Enter the same signaling server URL and pairing code shown on the phone.</p>
+  <input id="serverUrl" placeholder="wss://your-signaling-server.example.com" />
+  <input id="pairingCode" placeholder="Pairing code" />
+  <button onclick="connect()">Connect</button>
+  <p id="setupStatus"></p>
+</div>
+
+<div id="session">
+  <div id="apps-bar"></div>
+  <div id="video-wrap">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <input id="keyboard-input" />
+  </div>
+  <div id="status-bar">Not connected</div>
+</div>
+
+<script>
+let ws, pc, dataChannel;
+let pairingCode = '';
+let videoEl = document.getElementById('remoteVideo');
+let statusBar = document.getElementById('status-bar');
+let appsBar = document.getElementById('apps-bar');
+
+function connect() {
+  const serverUrl = document.getElementById('serverUrl').value.trim();
+  pairingCode = document.getElementById('pairingCode').value.trim();
+  if (!serverUrl || !pairingCode) {
+    document.getElementById('setupStatus').textContent = 'Enter both fields.';
+    return;
+  }
+
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('session').style.display = 'flex';
+
+  ws = new WebSocket(serverUrl);
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'join', role: 'viewer', room: pairingCode }));
+    setStatus('Waiting for phone to join...');
+  };
+
+  ws.onmessage = async (event) => {
+    const msg = JSON.parse(event.data);
+
+    if (msg.type === 'peer-joined') {
+      setStatus('Phone connected. Waiting for video offer...');
+      setupPeerConnection();
+    } else if (msg.type === 'offer') {
+      await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      ws.send(JSON.stringify({ type: 'answer', sdp: answer.sdp, room: pairingCode }));
+    } else if (msg.type === 'ice-candidate') {
+      try {
+        await pc.addIceCandidate({
+          sdpMid: msg.sdpMid,
+          sdpMLineIndex: msg.sdpMLineIndex,
+          candidate: msg.candidate
+        });
+      } catch (e) { console.warn('ICE add failed', e); }
+    } else if (msg.type === 'error') {
+      setStatus('Error: ' + msg.message);
+    }
+  };
+
+  ws.onclose = () => setStatus('Disconnected from signaling server.');
+  ws.onerror = () => setStatus('Signaling connection error.');
+}
+
+function setupPeerConnection() {
+  pc = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  });
+
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      ws.send(JSON.stringify({
+        type: 'ice-candidate',
+        sdpMid: event.candidate.sdpMid,
+        sdpMLineIndex: event.candidate.sdpMLineIndex,
+        candidate: event.candidate.candidate,
+        room: pairingCode
+      }));
+    }
+  };
+
+  pc.ontrack = (event) => {
+    videoEl.srcObject = event.streams[0];
+    setStatus('Live.');
+  };
+
+  pc.ondatachannel = (event) => {
+    dataChannel = event.channel;
+    wireDataChannel();
+  };
+}
+
+function wireDataChannel() {
+  dataChannel.onopen = () => setStatus('Control channel open.');
+  dataChannel.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.cmd === 'app-list') renderAppList(msg.apps);
+    if (msg.cmd === 'ack') console.log('ack', msg);
+  };
+}
+
+function send(obj) {
+  if (dataChannel && dataChannel.readyState === 'open') {
+    dataChannel.send(JSON.stringify(obj));
+  }
+}
+
+function renderAppList(apps) {
+  appsBar.innerHTML = '';
+  apps.forEach(app => {
+    const openBtn = document.createElement('button');
+    openBtn.className = 'app-btn';
+    openBtn.textContent = 'Open ' + app.label;
+    openBtn.onclick = () => send({ cmd: 'launch', packageName: app.packageName });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'app-btn';
+    closeBtn.textContent = 'Close ' + app.label;
+    closeBtn.onclick = () => send({ cmd: 'close', packageName: app.packageName });
+
+    appsBar.appendChild(openBtn);
+    appsBar.appendChild(closeBtn);
+  });
+}
+
+function setStatus(text) {
+  statusBar.textContent = text;
+}
+
+// ---------- Touch/mouse -> tap/swipe coordinate mapping ----------
+
+let touchStart = null;
+
+function videoCoords(clientX, clientY) {
+  const rect = videoEl.getBoundingClientRect();
+  const scaleX = videoEl.videoWidth / rect.width;
+  const scaleY = videoEl.videoHeight / rect.height;
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+}
+
+const videoWrap = document.getElementById('video-wrap');
+
+videoWrap.addEventListener('pointerdown', (e) => {
+  touchStart = { ...videoCoords(e.clientX, e.clientY), time: Date.now() };
+});
+
+videoWrap.addEventListener('pointerup', (e) => {
+  if (!touchStart) return;
+  const end = videoCoords(e.clientX, e.clientY);
+  const dx = end.x - touchStart.x;
+  const dy = end.y - touchStart.y;
+  const dist = Math.hypot(dx, dy);
+  const duration = Date.now() - touchStart.time;
+
+  if (dist < 10) {
+    if (duration > 500) {
+      send({ cmd: 'longPress', x: touchStart.x, y: touchStart.y });
+    } else {
+      send({ cmd: 'tap', x: touchStart.x, y: touchStart.y });
+    }
+  } else {
+    send({ cmd: 'swipe', x1: touchStart.x, y1: touchStart.y, x2: end.x, y2: end.y, durationMs: duration });
+  }
+  touchStart = null;
+});
+
+// Double-tap the video to bring up the keyboard for text input.
+let lastTap = 0;
+videoWrap.addEventListener('pointerup', () => {
+  const now = Date.now();
+  if (now - lastTap < 300) {
+    document.getElementById('keyboard-input').focus();
+  }
+  lastTap = now;
+});
+
+document.getElementById('keyboard-input').addEventListener('input', (e) => {
+  send({ cmd: 'type', text: e.target.value });
+});
+</script>
+</body>
+</html>
