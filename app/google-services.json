@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "730592657621",
+    "project_id": "remote-app-f1723",
+    "storage_bucket": "remote-app-f1723.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:730592657621:android:3889bf1cadd57bf04e225c",
+        "android_client_info": {
+          "package_name": "com.example.remoteapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCsmJYNV_caKa73BUzdxSU2uVyYISmdiOs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
