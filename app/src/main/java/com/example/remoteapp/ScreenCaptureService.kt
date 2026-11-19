@@ -5,7 +5,10 @@ import android.app.Service
 import android.content.Intent
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import org.webrtc.*
@@ -22,6 +25,7 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
     private lateinit var signalingClient: SignalingClient
     private lateinit var whitelistManager: WhitelistManager
     private lateinit var commandProcessor: RemoteCommandProcessor
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var mediaProjection: MediaProjection? = null
     private var mediaProjectionManager: MediaProjectionManager? = null
@@ -35,10 +39,21 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
     private var localVideoTrack: VideoTrack? = null
     private var dataChannel: DataChannel? = null
 
+    private fun toast(text: String) {
+        mainHandler.post {
+            Toast.makeText(applicationContext, text, Toast.LENGTH_LONG).show()
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent == null) return START_NOT_STICKY
+        toast("RemoteApp: service starting")
+
+        if (intent == null) {
+            toast("RemoteApp: no intent, stopping")
+            return START_NOT_STICKY
+        }
 
         whitelistManager = WhitelistManager(applicationContext)
         commandProcessor = RemoteCommandProcessor(applicationContext, whitelistManager)
@@ -47,9 +62,15 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
         val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-        val pairingCode = intent.getStringExtra(EXTRA_PAIRING_CODE) ?: return START_NOT_STICKY
+        val pairingCode = intent.getStringExtra(EXTRA_PAIRING_CODE)
+
+        if (pairingCode == null) {
+            toast("RemoteApp: missing pairing code, stopping")
+            return START_NOT_STICKY
+        }
 
         if (resultData == null || resultCode != android.app.Activity.RESULT_OK) {
+            toast("RemoteApp: screen capture permission not granted, stopping")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -61,6 +82,7 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, resultData)
 
         setupWebRtc()
+        toast("RemoteApp: connecting to Firebase, code $pairingCode")
         signalingClient = SignalingClient(pairingCode, this)
         signalingClient.connect()
 
@@ -94,7 +116,10 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
     }
 
     private fun startCapture() {
-        val permIntent = permissionIntent ?: return
+        val permIntent = permissionIntent ?: run {
+            toast("RemoteApp: no permission intent for capture")
+            return
+        }
 
         videoCapturer = ScreenCapturerAndroid(
             permIntent,
@@ -224,9 +249,12 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         sendOverDataChannel(ackJson.toString())
     }
 
-    override fun onConnected() {}
+    override fun onConnected() {
+        toast("RemoteApp: connected to Firebase, waiting for viewer")
+    }
 
     override fun onPeerJoined() {
+        toast("RemoteApp: viewer joined! Starting capture")
         startCapture()
         createPeerConnection()
 
@@ -235,15 +263,19 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
             override fun onCreateSuccess(desc: SessionDescription) {
                 peerConnection?.setLocalDescription(SimpleSdpObserver(), desc)
                 signalingClient.sendSdp("offer", desc.description)
+                toast("RemoteApp: offer sent")
             }
             override fun onSetSuccess() {}
-            override fun onCreateFailure(error: String?) {}
+            override fun onCreateFailure(error: String?) {
+                toast("RemoteApp: create offer failed: $error")
+            }
             override fun onSetFailure(error: String?) {}
         }, constraints)
     }
 
     override fun onRemoteSdp(type: String, sdp: String) {
         if (type == "answer") {
+            toast("RemoteApp: answer received")
             val desc = SessionDescription(SessionDescription.Type.ANSWER, sdp)
             peerConnection?.setRemoteDescription(SimpleSdpObserver(), desc)
         }
@@ -253,8 +285,13 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         peerConnection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
     }
 
-    override fun onDisconnected() {}
-    override fun onError(message: String) {}
+    override fun onDisconnected() {
+        toast("RemoteApp: disconnected")
+    }
+
+    override fun onError(message: String) {
+        toast("RemoteApp ERROR: $message")
+    }
 
     override fun onDestroy() {
         super.onDestroy()
