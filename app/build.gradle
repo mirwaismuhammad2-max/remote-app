@@ -67,8 +67,6 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
     implementation 'org.nanohttpd:nanohttpd-websocket:2.3.1'
 
-    // Firebase: Firestore is now how the two phones find each other,
-    // over the internet, regardless of which network each is on.
     implementation platform('com.google.firebase:firebase-bom:33.1.2')
     implementation 'com.google.firebase:firebase-firestore-ktx'
 }
