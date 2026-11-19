@@ -1,3 +1,4 @@
+cat > /home/claude/RemoteAppProject/app/src/main/java/com/example/remoteapp/ScreenCaptureService.kt << 'EOF'
 package com.example.remoteapp
 
 import android.app.Notification
@@ -5,30 +6,16 @@ import android.app.Service
 import android.content.Intent
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import org.webrtc.*
 
-/**
- * Owns the whole remote-session lifecycle on the phone side:
- *  1. Captures the screen via MediaProjection
- *  2. Streams it out over WebRTC (video track)
- *  3. Opens a WebRTC DataChannel for low-latency control commands
- *  4. Routes every incoming command through RemoteCommandProcessor,
- *     which enforces the whitelist before anything happens
- *
- * Start this service with EXTRA_RESULT_CODE / EXTRA_RESULT_DATA from
- * MediaProjectionManager's permission prompt (handled in MainActivity),
- * plus EXTRA_SIGNALING_URL and EXTRA_PAIRING_CODE.
- */
 class ScreenCaptureService : Service(), SignalingClient.Listener {
 
     companion object {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
-        const val EXTRA_SIGNALING_URL = "signaling_url"
         const val EXTRA_PAIRING_CODE = "pairing_code"
         const val NOTIFICATION_ID = 42
     }
@@ -61,7 +48,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
         val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-        val signalingUrl = intent.getStringExtra(EXTRA_SIGNALING_URL) ?: return START_NOT_STICKY
         val pairingCode = intent.getStringExtra(EXTRA_PAIRING_CODE) ?: return START_NOT_STICKY
 
         if (resultData == null || resultCode != android.app.Activity.RESULT_OK) {
@@ -76,7 +62,7 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, resultData)
 
         setupWebRtc()
-        signalingClient = SignalingClient(signalingUrl, pairingCode, this)
+        signalingClient = SignalingClient(pairingCode, this)
         signalingClient.connect()
 
         return START_STICKY
@@ -90,8 +76,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
             .setOngoing(true)
             .build()
     }
-
-    // ---------- WebRTC setup ----------
 
     private fun setupWebRtc() {
         eglBase = EglBase.create()
@@ -126,8 +110,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         videoSource = peerConnectionFactory.createVideoSource(true)
         videoCapturer?.initialize(surfaceTextureHelper, applicationContext, videoSource!!.capturerObserver)
 
-        // 1280x720 @ 15fps keeps bandwidth/CPU reasonable for a control-focused
-        // session; raise this if you want sharper detail and have the bandwidth.
         videoCapturer?.startCapture(1280, 720, 15)
 
         localVideoTrack = peerConnectionFactory.createVideoTrack("screen_video", videoSource)
@@ -168,7 +150,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
             peerConnection?.addTrack(track, listOf("screen_stream"))
         }
 
-        // Host creates the data channel; the viewer receives it via onDataChannel.
         val dcInit = DataChannel.Init()
         dataChannel = peerConnection?.createDataChannel("control", dcInit)
         dataChannel?.let { observeDataChannel(it) }
@@ -179,7 +160,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
             override fun onBufferedAmountChange(previousAmount: Long) {}
             override fun onStateChange() {
                 if (channel.state() == DataChannel.State.OPEN) {
-                    // Let the viewer know what it's allowed to open/close.
                     sendAppListOverDataChannel()
                 }
             }
@@ -214,8 +194,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         dataChannel?.send(buffer)
     }
 
-    // ---------- Routing incoming commands through RemoteCommandProcessor ----------
-
     private fun handleControlMessage(text: String) {
         val json = try { JSONObject(text) } catch (e: Exception) { return }
         val cmd = json.optString("cmd")
@@ -247,11 +225,7 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         sendOverDataChannel(ackJson.toString())
     }
 
-    // ---------- SignalingClient.Listener ----------
-
-    override fun onConnected() {
-        // Waiting for the viewer to join before creating the offer.
-    }
+    override fun onConnected() {}
 
     override fun onPeerJoined() {
         startCapture()
@@ -280,12 +254,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         peerConnection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
     }
 
-    override fun onControlMessage(json: JSONObject) {
-        // Control messages normally arrive over the DataChannel, not the
-        // signaling WebSocket. This exists only as a fallback path.
-        handleControlMessage(json.toString())
-    }
-
     override fun onDisconnected() {}
     override fun onError(message: String) {}
 
@@ -301,10 +269,11 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
     }
 }
 
-/** SdpObserver with every method defaulted to no-op, for the setLocal/RemoteDescription calls. */
 private class SimpleSdpObserver : SdpObserver {
     override fun onCreateSuccess(desc: SessionDescription?) {}
     override fun onSetSuccess() {}
     override fun onCreateFailure(error: String?) {}
     override fun onSetFailure(error: String?) {}
 }
+EOF
+echo done
