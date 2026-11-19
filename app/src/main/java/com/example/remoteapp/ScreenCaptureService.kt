@@ -1,4 +1,3 @@
-cat > /home/claude/RemoteAppProject/app/src/main/java/com/example/remoteapp/ScreenCaptureService.kt << 'EOF'
 package com.example.remoteapp
 
 import android.app.Notification
@@ -275,5 +274,3 @@ private class SimpleSdpObserver : SdpObserver {
     override fun onCreateFailure(error: String?) {}
     override fun onSetFailure(error: String?) {}
 }
-EOF
-echo done
