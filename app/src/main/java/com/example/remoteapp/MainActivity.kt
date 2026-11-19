@@ -1,4 +1,3 @@
-cat > /home/claude/RemoteAppProject/app/src/main/java/com/example/remoteapp/MainActivity.kt << 'EOF'
 package com.example.remoteapp
 
 import android.content.Intent
@@ -165,5 +164,3 @@ fun HomeScreen(
         }
     }
 }
-EOF
-echo done
