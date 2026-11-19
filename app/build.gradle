@@ -1,6 +1,7 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'com.google.gms.google-services'
 }
 
 android {
@@ -60,15 +61,14 @@ dependencies {
     implementation 'androidx.compose.material3:material3'
     debugImplementation 'androidx.compose.ui:ui-tooling'
 
-    // WebSocket signaling client
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-
-    // WebRTC for screen streaming + data channel control commands
     implementation 'io.github.webrtc-sdk:android:125.6422.06.1'
-
-    // JSON for signaling + command messages
     implementation 'org.json:json:20240303'
-
-    // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+    implementation 'org.nanohttpd:nanohttpd-websocket:2.3.1'
+
+    // Firebase: Firestore is now how the two phones find each other,
+    // over the internet, regardless of which network each is on.
+    implementation platform('com.google.firebase:firebase-bom:33.1.2')
+    implementation 'com.google.firebase:firebase-firestore-ktx'
 }
