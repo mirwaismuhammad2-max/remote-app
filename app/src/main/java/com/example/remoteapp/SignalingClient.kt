@@ -1,136 +1,117 @@
+cat > /home/claude/RemoteAppProject/app/src/main/java/com/example/remoteapp/SignalingClient.kt << 'EOF'
 package com.example.remoteapp
 
-import okhttp3.*
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 
 /**
- * Talks to the small Node.js relay server in /signaling-server.
- * Responsibilities:
- *   - join a "room" identified by a pairing code
- *   - relay WebRTC offer/answer/ice-candidate messages between phone and viewer
- * This class does NOT know about WebRTC internals — it just moves JSON
- * strings back and forth. ScreenCaptureService builds/parses the payloads.
+ * Signaling goes through Firebase Firestore instead of a custom server.
+ * This is what lets Phone A and Phone B find each other over the internet
+ * regardless of which network each is on (Wi-Fi, mobile data, different
+ * carriers — none of that matters, since Firestore is reachable from
+ * anywhere). The actual video/control stream still flows directly between
+ * the two phones via WebRTC; Firestore is only used to exchange the
+ * handshake messages needed to set that connection up.
+ *
+ * Document layout, under sessions/{pairingCode}:
+ *   - offer: String?   (written by the phone/host)
+ *   - answer: String?  (written by the viewer)
+ *   subcollections:
+ *   - hostCandidates/{auto-id}   { sdpMid, sdpMLineIndex, candidate }
+ *   - viewerCandidates/{auto-id} { sdpMid, sdpMLineIndex, candidate }
+ *   - presence/viewer            { online: true }  (written by the viewer on connect)
  */
 class SignalingClient(
-    private val serverUrl: String, // e.g. "wss://your-server.example.com"
     private val pairingCode: String,
     private val listener: Listener
 ) {
     interface Listener {
         fun onConnected()
         fun onPeerJoined()
-        fun onRemoteSdp(type: String, sdp: String) // "offer" or "answer"
+        fun onRemoteSdp(type: String, sdp: String)
         fun onRemoteIceCandidate(sdpMid: String, sdpMLineIndex: Int, candidate: String)
-        fun onControlMessage(json: JSONObject) // launch/close/tap/swipe/type commands
         fun onDisconnected()
         fun onError(message: String)
     }
 
-    private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS) // WebSocket stays open indefinitely
-        .build()
+    private val db = FirebaseFirestore.getInstance()
+    private val sessionDoc = db.collection("sessions").document(pairingCode)
 
-    private var webSocket: WebSocket? = null
+    private var answerListener: ListenerRegistration? = null
+    private var candidatesListener: ListenerRegistration? = null
+    private var presenceListener: ListenerRegistration? = null
+    private var peerJoinedNotified = false
 
     fun connect() {
-        val request = Request.Builder().url(serverUrl).build()
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                val join = JSONObject().apply {
-                    put("type", "join")
-                    put("role", "host") // the phone is always "host"; the viewer joins as "viewer"
-                    put("room", pairingCode)
-                }
-                webSocket.send(join.toString())
+        // Clear any stale offer/answer from a previous session under this code.
+        sessionDoc.set(mapOf("offer" to null, "answer" to null))
+            .addOnSuccessListener {
                 listener.onConnected()
+                listenForViewerPresence()
             }
+            .addOnFailureListener { e ->
+                listener.onError(e.message ?: "Firestore write failed")
+            }
+    }
 
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                try {
-                    val json = JSONObject(text)
-                    when (json.optString("type")) {
-                        "peer-joined" -> listener.onPeerJoined()
-                        "offer", "answer" -> listener.onRemoteSdp(
-                            json.getString("type"),
-                            json.getString("sdp")
-                        )
-                        "ice-candidate" -> listener.onRemoteIceCandidate(
-                            json.getString("sdpMid"),
-                            json.getInt("sdpMLineIndex"),
-                            json.getString("candidate")
-                        )
-                        "control" -> listener.onControlMessage(json.getJSONObject("payload"))
-                        "error" -> listener.onError(json.optString("message", "unknown error"))
-                    }
-                } catch (e: Exception) {
-                    listener.onError("Bad message from server: ${e.message}")
+    private fun listenForViewerPresence() {
+        presenceListener = sessionDoc.collection("presence").document("viewer")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    listener.onError(error.message ?: "presence listen failed")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null && snapshot.exists() && !peerJoinedNotified) {
+                    peerJoinedNotified = true
+                    listener.onPeerJoined()
+                    listenForAnswerAndCandidates()
                 }
             }
+    }
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                listener.onError(t.message ?: "WebSocket failure")
-            }
+    private fun listenForAnswerAndCandidates() {
+        answerListener = sessionDoc.addSnapshotListener { snapshot, error ->
+            if (error != null) return@addSnapshotListener
+            val answer = snapshot?.getString("answer")
+            if (answer != null) listener.onRemoteSdp("answer", answer)
+        }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                listener.onDisconnected()
+        candidatesListener = sessionDoc.collection("viewerCandidates")
+            .addSnapshotListener { snapshots, error ->
+                if (error != null) return@addSnapshotListener
+                snapshots?.documentChanges?.forEach { change ->
+                    if (change.type == com.google.firebase.firestore.DocumentChange.Type.ADDED) {
+                        val doc = change.document
+                        listener.onRemoteIceCandidate(
+                            doc.getString("sdpMid") ?: "",
+                            (doc.getLong("sdpMLineIndex") ?: 0).toInt(),
+                            doc.getString("candidate") ?: ""
+                        )
+                    }
+                }
             }
-        })
     }
 
     fun sendSdp(type: String, sdp: String) {
-        val json = JSONObject().apply {
-            put("type", type)
-            put("sdp", sdp)
-            put("room", pairingCode)
-        }
-        webSocket?.send(json.toString())
+        sessionDoc.update(type, sdp)
     }
 
     fun sendIceCandidate(sdpMid: String?, sdpMLineIndex: Int, candidate: String) {
-        val json = JSONObject().apply {
-            put("type", "ice-candidate")
-            put("sdpMid", sdpMid ?: "")
-            put("sdpMLineIndex", sdpMLineIndex)
-            put("candidate", candidate)
-            put("room", pairingCode)
-        }
-        webSocket?.send(json.toString())
-    }
-
-    fun sendControlAck(originalType: String, outcome: String, reason: String? = null) {
-        val payload = JSONObject().apply {
-            put("type", originalType)
-            put("outcome", outcome)
-            reason?.let { put("reason", it) }
-        }
-        val json = JSONObject().apply {
-            put("type", "control-ack")
-            put("payload", payload)
-            put("room", pairingCode)
-        }
-        webSocket?.send(json.toString())
-    }
-
-    fun sendAppList(apps: List<WhitelistedApp>) {
-        val arr = org.json.JSONArray()
-        apps.forEach {
-            arr.put(JSONObject().apply {
-                put("packageName", it.packageName)
-                put("label", it.label)
-            })
-        }
-        val json = JSONObject().apply {
-            put("type", "app-list")
-            put("apps", arr)
-            put("room", pairingCode)
-        }
-        webSocket?.send(json.toString())
+        sessionDoc.collection("hostCandidates").add(
+            mapOf(
+                "sdpMid" to (sdpMid ?: ""),
+                "sdpMLineIndex" to sdpMLineIndex,
+                "candidate" to candidate
+            )
+        )
     }
 
     fun disconnect() {
-        webSocket?.close(1000, "done")
-        client.dispatcher.executorService.shutdown()
+        answerListener?.remove()
+        candidatesListener?.remove()
+        presenceListener?.remove()
+        listener.onDisconnected()
     }
 }
+EOF
+echo done
