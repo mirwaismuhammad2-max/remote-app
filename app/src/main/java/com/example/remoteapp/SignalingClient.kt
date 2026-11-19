@@ -1,26 +1,8 @@
-cat > /home/claude/RemoteAppProject/app/src/main/java/com/example/remoteapp/SignalingClient.kt << 'EOF'
 package com.example.remoteapp
 
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 
-/**
- * Signaling goes through Firebase Firestore instead of a custom server.
- * This is what lets Phone A and Phone B find each other over the internet
- * regardless of which network each is on (Wi-Fi, mobile data, different
- * carriers — none of that matters, since Firestore is reachable from
- * anywhere). The actual video/control stream still flows directly between
- * the two phones via WebRTC; Firestore is only used to exchange the
- * handshake messages needed to set that connection up.
- *
- * Document layout, under sessions/{pairingCode}:
- *   - offer: String?   (written by the phone/host)
- *   - answer: String?  (written by the viewer)
- *   subcollections:
- *   - hostCandidates/{auto-id}   { sdpMid, sdpMLineIndex, candidate }
- *   - viewerCandidates/{auto-id} { sdpMid, sdpMLineIndex, candidate }
- *   - presence/viewer            { online: true }  (written by the viewer on connect)
- */
 class SignalingClient(
     private val pairingCode: String,
     private val listener: Listener
@@ -43,7 +25,6 @@ class SignalingClient(
     private var peerJoinedNotified = false
 
     fun connect() {
-        // Clear any stale offer/answer from a previous session under this code.
         sessionDoc.set(mapOf("offer" to null, "answer" to null))
             .addOnSuccessListener {
                 listener.onConnected()
@@ -113,5 +94,3 @@ class SignalingClient(
         listener.onDisconnected()
     }
 }
-EOF
-echo done
