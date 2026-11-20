@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.Service
 import android.content.Intent
 import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -27,8 +26,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
     private lateinit var commandProcessor: RemoteCommandProcessor
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var mediaProjection: MediaProjection? = null
-    private var mediaProjectionManager: MediaProjectionManager? = null
     private var permissionIntent: Intent? = null
 
     private lateinit var eglBase: EglBase
@@ -76,10 +73,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         }
 
         permissionIntent = resultData
-
-        mediaProjectionManager =
-            getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, resultData)
 
         setupWebRtc()
         toast("RemoteApp: connecting to Firebase, code $pairingCode")
@@ -300,7 +293,6 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         videoSource?.dispose()
         dataChannel?.close()
         peerConnection?.close()
-        mediaProjection?.stop()
         if (::signalingClient.isInitialized) signalingClient.disconnect()
     }
 }
