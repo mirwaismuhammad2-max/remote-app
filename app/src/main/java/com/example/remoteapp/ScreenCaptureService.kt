@@ -7,6 +7,8 @@ import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
@@ -128,10 +130,13 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
             videoSource = peerConnectionFactory.createVideoSource(true)
             videoCapturer?.initialize(surfaceTextureHelper, applicationContext, videoSource!!.capturerObserver)
 
-            val metrics = resources.displayMetrics
-            val width = metrics.widthPixels
-            val height = metrics.heightPixels
-            videoCapturer?.startCapture(width, height, 15)
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            val width = (metrics.widthPixels / 2) * 2
+            val height = (metrics.heightPixels / 2) * 2
+            videoCapturer?.startCapture(width, height, 20)
             toast("RemoteApp: capture started at ${width}x${height}")
 
             localVideoTrack = peerConnectionFactory.createVideoTrack("screen_video", videoSource)
