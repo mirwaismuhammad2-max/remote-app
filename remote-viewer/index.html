@@ -32,8 +32,8 @@
   #logoutBtn { background: #999; }
   #session { display: none; height: 100%; flex-direction: column; }
   #top-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--panel); }
-  #apps-bar { display: flex; gap: 8px; padding: 10px; overflow-x: auto; background: var(--panel); }
-  #apps-bar .app-btn { white-space: nowrap; flex-shrink: 0; }
+  #apps-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; background: var(--panel); max-height: 35vh; overflow-y: auto; }
+  #apps-bar .app-btn { white-space: nowrap; }
   #video-wrap {
     position: relative; flex: 1; overflow: hidden; background: black;
     display: flex; align-items: center; justify-content: center; touch-action: none;
@@ -169,6 +169,7 @@ function wireDataChannel() {
   dataChannel.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.cmd === 'app-list') renderAppList(msg.apps);
+    if (msg.cmd === 'ack') setStatus('Command "' + msg.for + '" result: ' + msg.outcome);
   };
 }
 
