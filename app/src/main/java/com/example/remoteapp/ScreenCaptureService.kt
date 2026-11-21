@@ -114,22 +114,30 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
             return
         }
 
-        videoCapturer = ScreenCapturerAndroid(
-            permIntent,
-            object : MediaProjection.Callback() {
-                override fun onStop() {
-                    stopSelf()
+        try {
+            videoCapturer = ScreenCapturerAndroid(
+                permIntent,
+                object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        stopSelf()
+                    }
                 }
-            }
-        )
+            )
 
-        val surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
-        videoSource = peerConnectionFactory.createVideoSource(true)
-        videoCapturer?.initialize(surfaceTextureHelper, applicationContext, videoSource!!.capturerObserver)
+            val surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
+            videoSource = peerConnectionFactory.createVideoSource(true)
+            videoCapturer?.initialize(surfaceTextureHelper, applicationContext, videoSource!!.capturerObserver)
 
-        videoCapturer?.startCapture(1280, 720, 15)
+            val metrics = resources.displayMetrics
+            val width = metrics.widthPixels
+            val height = metrics.heightPixels
+            videoCapturer?.startCapture(width, height, 15)
+            toast("RemoteApp: capture started at ${width}x${height}")
 
-        localVideoTrack = peerConnectionFactory.createVideoTrack("screen_video", videoSource)
+            localVideoTrack = peerConnectionFactory.createVideoTrack("screen_video", videoSource)
+        } catch (e: Exception) {
+            toast("RemoteApp: capture failed: ${e.message}")
+        }
     }
 
     private fun createPeerConnection() {
@@ -215,29 +223,35 @@ class ScreenCaptureService : Service(), SignalingClient.Listener {
         val json = try { JSONObject(text) } catch (e: Exception) { return }
         val cmd = json.optString("cmd")
 
-        val outcome = when (cmd) {
-            "launch" -> commandProcessor.handleLaunch(json.getString("packageName"))
-            "close" -> commandProcessor.handleClose(json.getString("packageName"))
-            "tap" -> commandProcessor.handleTap(
-                json.getDouble("x").toFloat(), json.getDouble("y").toFloat()
-            )
-            "swipe" -> commandProcessor.handleSwipe(
-                json.getDouble("x1").toFloat(), json.getDouble("y1").toFloat(),
-                json.getDouble("x2").toFloat(), json.getDouble("y2").toFloat(),
-                json.optLong("durationMs", 300)
-            )
-            "longPress" -> commandProcessor.handleLongPress(
-                json.getDouble("x").toFloat(), json.getDouble("y").toFloat()
-            )
-            "type" -> commandProcessor.handleType(json.getString("text"))
-            "back" -> commandProcessor.handleBack()
-            else -> RemoteCommandProcessor.CommandOutcome.Error("Unknown command: $cmd")
+        val outcomeText: String = try {
+            val outcome = when (cmd) {
+                "launch" -> commandProcessor.handleLaunch(json.getString("packageName"))
+                "close" -> commandProcessor.handleClose(json.getString("packageName"))
+                "tap" -> commandProcessor.handleTap(
+                    json.getDouble("x").toFloat(), json.getDouble("y").toFloat()
+                )
+                "swipe" -> commandProcessor.handleSwipe(
+                    json.getDouble("x1").toFloat(), json.getDouble("y1").toFloat(),
+                    json.getDouble("x2").toFloat(), json.getDouble("y2").toFloat(),
+                    json.optLong("durationMs", 300)
+                )
+                "longPress" -> commandProcessor.handleLongPress(
+                    json.getDouble("x").toFloat(), json.getDouble("y").toFloat()
+                )
+                "type" -> commandProcessor.handleType(json.getString("text"))
+                "back" -> commandProcessor.handleBack()
+                else -> RemoteCommandProcessor.CommandOutcome.Error("Unknown command: $cmd")
+            }
+            outcome::class.simpleName ?: "Unknown"
+        } catch (e: Exception) {
+            toast("RemoteApp: command '$cmd' crashed: ${e.message}")
+            "Exception: ${e.message}"
         }
 
         val ackJson = JSONObject().apply {
             put("cmd", "ack")
             put("for", cmd)
-            put("outcome", outcome::class.simpleName)
+            put("outcome", outcomeText)
         }
         sendOverDataChannel(ackJson.toString())
     }
